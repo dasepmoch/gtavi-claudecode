@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Thin wrapper: runs the clip desk scripts with the project venv, from a desk/ work folder.
+# Works in both layouts: repo root (scripts/ next to this file) and a clone inside a
+# workspace (gtavi-claudecode/scripts next to this file).
+#
+# usage: ./clipdesk trends "gta 6" --hours 24
+#        ./clipdesk streams --query "gta 6"
+#        ./clipdesk moments https://www.youtube.com/watch?v=... --top 6
+#        ./clipdesk cut jobs/<id> --pick 1 --layout blur --hook "..." --credit "@creator"
+#        ./clipdesk check jobs/<id>/edits/clip_1.mp4 --campaign campaigns.md
+#
+# env: CLIP_DESK_HOME (work folder, default <workspace>/desk), CLIP_DESK_PYTHON (interpreter)
+set -euo pipefail
+
+SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$SELF/scripts/moments.py" ]]; then
+  SCRIPTS="$SELF/scripts"
+  WORKROOT="$(dirname "$SELF")"
+else
+  SCRIPTS="$SELF/gtavi-claudecode/scripts"
+  WORKROOT="$SELF"
+fi
+
+pick_py() {
+  for c in "$@"; do [[ -x "$c" ]] && { printf '%s\n' "$c"; return 0; }; done
+  command -v python3
+}
+PY="${CLIP_DESK_PYTHON:-$(pick_py "$WORKROOT/.venv/bin/python" "$SELF/.venv/bin/python")}"
+DESK="${CLIP_DESK_HOME:-$WORKROOT/desk}"
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  trends|streams|moments|cut|check|live|facecam|payouts|questions|secrets_map|translate)
+    mkdir -p "$DESK"
+    cd "$DESK"
+    exec "$PY" "$SCRIPTS/$cmd.py" "$@"
+    ;;
+  ffmpeg|ffprobe|python|git)
+    exec "$cmd" "$@"
+    ;;
+  ""|-h|--help|help)
+    sed -n '2,12p' "$SELF/clipdesk" | sed 's/^# \{0,1\}//'
+    echo
+    echo "scripts: $SCRIPTS"
+    echo "python:  $PY"
+    echo "desk:    $DESK"
+    ls "$DESK" 2>/dev/null || true
+    ;;
+  *)
+    echo "unknown command: $cmd (try: trends, streams, moments, cut, check)" >&2
+    exit 2
+    ;;
+esac

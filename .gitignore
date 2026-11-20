@@ -6,3 +6,8 @@ test/
 *.wav
 *.ts
 !docs/*.mp4
+
+# local work area (clips, transcripts, publish queue)
+desk/
+publish/
+*.log

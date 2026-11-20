@@ -1,0 +1,56 @@
+diff --git a/.gitignore b/.gitignore
+index b8b56dc..7aea03b 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -6,3 +6,8 @@ test/
+ *.wav
+ *.ts
+ !docs/*.mp4
++
++# local work area (clips, transcripts, publish queue)
++desk/
++publish/
++*.log
+diff --git a/scripts/moments.py b/scripts/moments.py
+index e2baabd..8748583 100644
+--- a/scripts/moments.py
++++ b/scripts/moments.py
+@@ -14,6 +14,8 @@ from common import ffprobe, is_url, job_dir, load_json, run, save_json, tool, yt
+ 
+ HYPE = re.compile(r"\b(no way|oh my god|omg|what|wait|bro|let'?s go|holy|insane|crazy|yo+|wtf|dude|look at|nah|run|go go)\b", re.I)
+ CHAT_HYPE = re.compile(r"(LMAO|LOL|KEKW|OMEGALUL|W+\b|CLIP|💀|😂|🔥|NO WAY|HOLY)", re.I)
++# sound-effect labels Whisper emits when the VAD is off (only used on that fallback pass)
++NOISE = re.compile(r"[\[\(]?(music|gunfire|gunshots?|applause|laughter|laughs|silence|noise|static|siren|explosion|engine|footsteps|birds|wind|rain|crowd|cheering|beep|ding|sound effect)[\]\)]?[.,!?]*$", re.I)
+ 
+ 
+ def fetch(src, d, max_min):
+@@ -61,15 +63,25 @@ def transcribe(wav, d):
+     with wave.open(str(wav)) as w:  # pass samples directly (16 kHz mono), no extra decoder needed
+         pcm = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32) / 32768
+ 
+-    def run_on(device):
++    def run_on(device, vad=True):
+         model = WhisperModel("small", device=device, compute_type="float16" if device == "cuda" else "int8")
+-        segs, _ = model.transcribe(pcm, word_timestamps=True, vad_filter=True)
+-        return [{"w": w.word.strip(), "s": round(w.start, 2), "e": round(w.end, 2)} for s in segs for w in (s.words or [])]
++        segs, _ = model.transcribe(pcm, word_timestamps=True, vad_filter=vad)
++        if vad:
++            return [{"w": w.word.strip(), "s": round(w.start, 2), "e": round(w.end, 2)} for s in segs for w in (s.words or [])]
++        # without VAD Whisper also labels sound effects as speech: keep real lines only
++        return [{"w": w.word.strip(), "s": round(w.start, 2), "e": round(w.end, 2)}
++                for s in segs if getattr(s, "no_speech_prob", 0.0) < 0.5
++                for w in (s.words or []) if not NOISE.match(w.word.strip())]
++    device = "cuda" if cuda else "cpu"
+     try:
+-        words = run_on("cuda" if cuda else "cpu")
++        words = run_on(device)
+     except RuntimeError as e:  # GPU present but CUDA libraries missing: fall back to CPU
+         print(f"GPU transcription unavailable ({str(e)[:80]}), using CPU")
+         words = run_on("cpu")
++    if not words:
++        # gameplay audio is mostly music and gunfire: the VAD drops everything, so retry without it
++        print("transcript: VAD found no speech, retrying without VAD")
++        words = run_on(device if device == "cpu" else "cuda", vad=False)
+     save_json(out, words)
+     return words
+ 
